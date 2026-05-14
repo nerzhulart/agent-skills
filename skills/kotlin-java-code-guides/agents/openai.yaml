@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kotlin/Java Code Guides"
+  short_description: "Idiomatic JVM Kotlin/Java coding guide"
+  default_prompt: "Use $kotlin-java-code-guides to design and implement idiomatic non-Android Kotlin/Java code with clean APIs and architecture."
