@@ -1,0 +1,9 @@
+{
+  "name": "agent-skills",
+  "description": "Personal Codex and Claude Code agent skills.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Artem Bukhonov"
+  },
+  "repository": "https://github.com/nerzhulart/agent-skills"
+}

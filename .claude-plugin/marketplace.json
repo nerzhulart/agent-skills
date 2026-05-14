@@ -1,0 +1,17 @@
+{
+  "name": "agent-skills",
+  "owner": {
+    "name": "Artem Bukhonov"
+  },
+  "metadata": {
+    "description": "Personal Codex and Claude Code agent skills."
+  },
+  "plugins": [
+    {
+      "name": "agent-skills",
+      "source": "./",
+      "description": "Personal Codex and Claude Code agent skills.",
+      "version": "0.1.0"
+    }
+  ]
+}
