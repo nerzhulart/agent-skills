@@ -2,6 +2,8 @@
 
 Personal Codex and coding-agent skills synchronized across machines.
 
+These are opinionated personal skills distilled from my substantial hands-on experience building, reviewing, and maintaining Java/Kotlin systems.
+
 ## Layout
 
 - `skills/<skill-name>/SKILL.md` - individual skill instructions.
