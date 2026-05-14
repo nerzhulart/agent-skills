@@ -9,7 +9,7 @@ This guide is for idiomatic non-Android Kotlin coroutine and Flow code. Treat co
 - A `StateFlow<T>` represents observable state with a current value.
 - A `SharedFlow<T>` represents shared events or broadcasts.
 - A `CoroutineScope` owns launched work and defines its lifetime.
-- A `Job` is part of the lifecycle contract, not an implementation detail to ignore.
+- A `Job` is a low-level coroutine primitive. Do not expose it from business APIs; use `CoroutineScope` ownership or suspending operations to control work.
 
 ## Choose The Right Shape
 
@@ -120,7 +120,7 @@ suspend fun publishAuditEvents(events: List<AuditEvent>) = supervisorScope {
 
 If one child fails in `supervisorScope`, siblings continue. Parent cancellation still cancels all children. If the `supervisorScope` block itself throws, its children are cancelled. Each supervised child needs a local failure policy because child failure is no longer automatically turned into whole-operation failure.
 
-Use `SupervisorJob()` when constructing a long-lived scope:
+Use `SupervisorJob()` only in infrastructure or composition-root code that constructs an owned long-lived scope:
 
 ```kotlin
 val applicationScope = CoroutineScope(
@@ -144,6 +144,23 @@ A scope should be owned by one lifecycle:
 
 If a class creates a scope, it owns cleanup. If a class receives a scope, the provider owns cleanup. Do not cancel a scope you did not create unless the ownership contract says so.
 
+If no suitable scope is immediately available, do not fall back to an unrelated owner, global owner, or ad-hoc `close()` protocol. Find the lifecycle that semantically owns the feature or activity and use that scope. If the lifecycle belongs to a session, screen, request, job, component, or service, inject that scope from the corresponding owner or composition root.
+
+When a nested activity needs its own lifetime, make that owner explicit and pass in the scope that belongs to it. Do not invent generic machinery just to manufacture lifetimes. Framework-specific scope helpers belong in framework-specific guidance.
+
+```kotlin
+class ReportScreen(
+    private val scope: CoroutineScope,
+    private val pipeline: ReportPipeline
+) {
+    fun start() {
+        pipeline.startIn(scope)
+    }
+}
+```
+
+The important part is ownership: `ReportScreen` does not create a lifetime out of thin air. The composition root, UI framework, request framework, or service that owns the screen provides the scope.
+
 Prefer constructor injection for scopes that are part of the environment:
 
 ```kotlin
@@ -161,7 +178,7 @@ class CacheRefreshService(
 
 This service does not expose `close()` because it does not own `applicationScope`. The composition root or framework cancels the scope during application shutdown.
 
-When a component creates its own private scope, it must expose cleanup:
+When an infrastructure adapter creates its own private scope, it must expose cleanup:
 
 ```kotlin
 class PollingWorker(
@@ -188,7 +205,108 @@ class PollingWorker(
 }
 ```
 
-This shape is acceptable for adapters that really own resources. It is not a reason to put private scopes into ordinary domain services.
+This shape is acceptable for adapters that really own resources. It is not a reason to put `Job` or private scopes into ordinary feature or business services.
+
+### Scopes Instead Of Parallel Release Protocols
+
+Prefer scope-owned lifetimes over creating new manual `close` or `release` protocols in feature code. A separate lifecycle tree is often an older interop mechanism; it should not become the primary lifetime model when a coroutine scope already exists.
+
+If an older callback API requires a lifecycle owner, registration owner, or cancellation token, derive it from the owning scope when the framework provides such an adapter. Do not manually end the derived owner; doing so duplicates ownership and can invalidate siblings that also rely on the same scope-owned parent.
+
+Bad: inventing a parallel owner and cleanup path:
+
+```kotlin
+class ReportPanel(
+    private val events: EventSource,
+    private val listener: EventListener
+) {
+    private val owner = ManualLifecycleOwner("report-panel")
+
+    fun start(scope: CoroutineScope) {
+        events.addListener(listener, owner)
+        scope.launch { collectUpdates() }
+    }
+
+    fun release() {
+        owner.close()
+    }
+}
+```
+
+Better: bind callback APIs to the scope that already owns the activity:
+
+```kotlin
+class ReportPanel(
+    private val events: EventSource,
+    private val listener: EventListener,
+    private val scope: CoroutineScope,
+    private val lifecycleAdapters: LifecycleAdapters
+) {
+    init {
+        val registrationOwner = lifecycleAdapters.ownerFor(scope)
+        events.addListener(listener, registrationOwner)
+    }
+}
+```
+
+The derived registration owner is only an adapter for legacy listener APIs. The scope remains the owner. Synchronous listener registration in a constructor or factory is acceptable when the scope-owned parent handles unsubscription. Do not hide coroutine work in `init`; start launched work from a factory, `startIn(scope)`, or another caller-owned setup point whose ordering and failure policy are explicit.
+
+If the object receives a scope, do not close resources that the scope-created API already owns:
+
+```kotlin
+class ReportPanel(
+    private val view: ScopeOwnedView
+) {
+    fun close() {
+        view.close() // smell when createView(scope) already makes scope the owner
+    }
+}
+```
+
+End the owner scope instead. Keep explicit `close`, `release`, or `use` blocks only for resources whose API really requires deterministic cleanup and is not already owned by the scope.
+
+### Cleanup Coroutine Instead Of Lifecycle Hooks
+
+When a `CoroutineScope` owns the lifetime, do cleanup inside a child coroutine. Prefer `try/finally` around real work, or `awaitCancellation()` when the coroutine exists only to bind a resource to the scope.
+
+Bad:
+
+```kotlin
+val subscription = events.subscribe(listener)
+scope.coroutineContext.job.invokeOnCompletion {
+    subscription.close()
+}
+```
+
+Good:
+
+```kotlin
+scope.launch {
+    val subscription = events.subscribe(listener)
+    try {
+        awaitCancellation()
+    }
+    finally {
+        subscription.close()
+    }
+}
+```
+
+For active work:
+
+```kotlin
+scope.launch {
+    val resource = openResource()
+    try {
+        process(resource)
+    }
+    finally {
+        resource.close()
+    }
+}
+```
+
+Use `onClose`, `onDispose`, `invokeOnCompletion`/`invokeOnTermination`, or similar hooks only at API adapter boundaries where the API itself forces that shape.
 
 ### Scopes Instead Of Initialize And Close
 
@@ -196,16 +314,18 @@ Prefer binding background work to a caller-provided scope over creating lifecycl
 
 Do not start coroutine work from constructors or `init` blocks. Construction should establish required state, not launch asynchronous behavior that callers cannot await, order, or handle. If setup must suspend, expose a suspending factory or suspending initialization operation and call it from the caller-owned coroutine. If the object owns a long-lived listener, collector, or debounce pipeline, start that work from an explicit `startIn(scope)`/factory step using the caller-owned scope rather than hiding `scope.launch` in `init`.
 
-Use a `startIn` or `launchIn` style API when the object describes work but should not own the lifecycle:
+Use a `startIn` or `launchIn` style API when the object describes work but should not own the lifecycle. Do not return `Job` from business-level APIs; cancellation should come from the owning scope.
 
 ```kotlin
 class IndexingPipeline(
     private val events: Flow<FileEvent>,
     private val index: SearchIndex
 ) {
-    fun startIn(scope: CoroutineScope): Job = scope.launch {
-        events.collect { event ->
-            index.apply(event)
+    fun startIn(scope: CoroutineScope) {
+        scope.launch {
+            events.collect { event ->
+                index.apply(event)
+            }
         }
     }
 }
@@ -218,11 +338,13 @@ class Application(
     private val scope: CoroutineScope,
     private val indexingPipeline: IndexingPipeline
 ) {
-    private val indexingJob = indexingPipeline.startIn(scope)
+    fun start() {
+        indexingPipeline.startIn(scope)
+    }
 }
 ```
 
-This avoids hidden `initialize()` ordering and makes cancellation explicit: cancelling the scope or the returned `Job` stops the work.
+This avoids hidden `initialize()` ordering and keeps cancellation on the owner: cancelling `scope` stops the work.
 
 For work that can be naturally represented as data, prefer cold `Flow` over start/close lifecycle:
 

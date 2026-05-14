@@ -65,7 +65,7 @@ If a name needs one of these words, ask what capability or policy it represents.
 ## State And Side Effects
 
 - Keep mutation local.
-- Before adding mutable fields/properties, check whether the value can be local, constructor-supplied, or represented by an immutable value object.
+- Before adding mutable fields/properties, check whether the value can be local, constructor-supplied, represented by an immutable value object, or modeled as explicit observable state.
 - Avoid partially initialized objects. Prefer passing all required data into the constructor or factory, then store it in immutable fields/properties.
 - If mutable state exists only to forward to another handler, keep it in the lifecycle owner or remove it by passing the final handler directly.
 - If a class only maps one method call to another method call with the same data, remove the class and depend on the owning abstraction directly.
@@ -77,6 +77,83 @@ If a name needs one of these words, ask what capability or policy it represents.
 - Do not hide writes behind getters or computed properties.
 - Do not let constructors perform IO or start background work.
 - Do not cache unless there is a measured or obvious need and an invalidation policy.
+
+### Mutable State Is A Design Choice
+
+Treat every `var` as a state machine, not as a harmless convenience. A mutable field needs a clear owner, lifetime, threading story, and invalidation rule. If those are hard to explain, the design is probably hiding lifecycle or reactivity in the wrong place.
+
+Prefer these shapes, in order:
+
+- Local variables for temporary setup details.
+- Constructor/factory parameters stored as `val` or Java `final` fields.
+- Immutable value replacement for state transitions.
+- `StateFlow` or another explicit observable state primitive when the value is business state that changes over time and other code must react to it.
+
+Avoid this shape when the values are only needed to install one subscription:
+
+```kotlin
+class ChangeSummaryPanel {
+    private var currentTracker: ChangeTracker? = null
+    private var trackerListener: ChangeListener? = null
+
+    fun install() {
+        currentTracker = findChangeTracker()
+        trackerListener = ChangeListener { refresh() }
+        currentTracker?.addListener(trackerListener!!)
+    }
+}
+```
+
+Keep subscription details local to the place that owns the registration:
+
+```kotlin
+fun installTracking(scope: CoroutineScope) {
+    var currentTracker: ChangeTracker? = null
+    val listener = ChangeListener { refreshFrom(currentTracker) }
+
+    fun switchTracker(next: ChangeTracker?) {
+        currentTracker?.removeListener(listener)
+        currentTracker = next
+        next?.addListener(listener)
+        refreshFrom(next)
+    }
+
+    scope.launch {
+        try {
+            awaitCancellation()
+        }
+        finally {
+            currentTracker?.removeListener(listener)
+        }
+    }
+}
+```
+
+If that local mutable state starts leaking into multiple methods, do not promote it to fields by default. First ask whether the class is missing an explicit state model:
+
+```kotlin
+private val _state = MutableStateFlow(ChangeSummaryState.Empty)
+val state: StateFlow<ChangeSummaryState> = _state.asStateFlow()
+
+fun onTrackerChanged(tracker: ChangeTracker?) {
+    _state.value = ChangeSummaryState(changes = tracker.toChangedBlocks())
+}
+```
+
+Use mutable observable state intentionally: it should represent domain or UI state that consumers observe, not a storage bin for wiring details.
+
+### Manual Synchronization Smells
+
+Manual locking, atomics, volatile fields, and ad-hoc compare-and-set loops in feature or business code are strong design smells unless the code is explicitly implementing a concurrent primitive or shared low-level cache.
+
+Before adding manual synchronization, check whether the problem is really one of these:
+
+- The state belongs to one coroutine scope and should be updated inside that scope.
+- The state should be represented by `StateFlow`, an actor-style owner, a channel, or a serialized dispatcher.
+- The value can be computed locally instead of shared.
+- The object should receive fully initialized collaborators instead of being patched after construction.
+
+Do not add synchronization to make unclear ownership "safe". Fix the owner.
 
 ## Dependency Injection
 

@@ -1,4 +1,4 @@
 interface:
   display_name: "Kotlin/Java Code Guides"
-  short_description: "Idiomatic JVM Kotlin/Java coding guide"
-  default_prompt: "Use $kotlin-java-code-guides to design and implement idiomatic non-Android Kotlin/Java code with clean APIs and architecture."
+  short_description: "JVM Kotlin/Java API, state, coroutine, Flow guide"
+  default_prompt: "Use $kotlin-java-code-guides for non-Android JVM Kotlin/Java code involving API design, architecture boundaries, mutable state, var, StateFlow, Flow, CoroutineScope, Job, cancellation, cleanup, tests, or behavior-focused review."

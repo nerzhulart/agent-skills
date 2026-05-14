@@ -1,0 +1,4 @@
+interface:
+  display_name: "IntelliJ Platform Kotlin Guides"
+  short_description: "IntelliJ Disposable, scope, listener lifecycle guide"
+  default_prompt: "Use $intellij-platform-kotlin-guides for IntelliJ Platform Kotlin/Java code involving Project, Application, Service, CoroutineScope, Disposable, Disposer, parentDisposable, asDisposable, disposeOnCompletion, childScope, MessageBus, DocumentListener, LineStatusTracker, FileEditor, editor/viewer/panel/control lifetimes, listener subscriptions, cleanup, or memory leaks."

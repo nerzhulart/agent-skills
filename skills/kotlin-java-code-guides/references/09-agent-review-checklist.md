@@ -33,10 +33,20 @@ Run this checklist before finalizing a Kotlin/Java coding task.
 - Are side effects visible and owned by the right layer?
 - Is state ownership clear?
 - Is mutable state minimal, private, and justified by real lifecycle needs?
+- Does every new `var` have a clear owner, lifetime, threading story, and invalidation rule?
+- Could any mutable field be a local variable, constructor value, immutable value replacement, or explicit observable state instead?
+- Is business/UI state that other code reacts to represented by an explicit reactive model such as `StateFlow` rather than scattered mutable fields?
+- Are temporary listener/subscription details kept local to the setup/cleanup point instead of being promoted to object fields?
 - Are atomics/volatile fields used only for real concurrent state transitions, not for immutable collaborators or misplaced lifecycle guards?
 - Did the change avoid `AtomicReference`/`lateinit`/nullable placeholders whose only purpose is to break construction order?
+- Did the change avoid manual locking/CAS/synchronization in feature or business code unless it is implementing a real concurrency primitive?
 - Are external resources closed and failures preserved?
 - Is concurrency lifecycle, cancellation, or locking explicit where relevant?
+- If a scope is provided, did the code avoid inventing a parallel close/release lifecycle?
+- If an older callback API requires a lifecycle owner or cancellation token, is it derived from the semantic scope and left owned by that scope?
+- Did the change avoid manually closing/cancelling/discarding resources already owned by a scope passed to their factory?
+- For scope-owned cleanup, did the code prefer a child coroutine with `try/finally` and `awaitCancellation()` over `onClose`/`onDispose`/termination hooks?
+- Did business APIs avoid exposing `Job` and use `CoroutineScope` ownership or suspending operations for lifecycle control?
 
 ## Kotlin
 
